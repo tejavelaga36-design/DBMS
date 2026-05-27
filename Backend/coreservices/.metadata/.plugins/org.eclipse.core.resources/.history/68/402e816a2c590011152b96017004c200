@@ -1,0 +1,117 @@
+package mth.service;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
+import mth.dto.*;
+import mth.entity.Users;
+import mth.exception.DuplicateResourceException;
+import mth.exception.ResourceNotFoundException;
+import mth.repository.UsersRepository;
+
+@Service
+@RequiredArgsConstructor
+public class UsersServices {
+
+    private final UsersRepository usersRepository = null;
+    private final Jwtservice jwtService = null;
+    private final PasswordEncoder passwordEncoder = null;
+
+    /**
+     * Register a new user.
+     */
+    public TokenResponseDTO signup(UserCreateDTO dto) {
+        // Check if email already exists
+        if (usersRepository.existsByEmail(dto.getEmail())) {
+            throw new DuplicateResourceException("Email already registered: " + dto.getEmail());
+        }
+
+        // Check if username already exists
+        if (usersRepository.existsByUsername(dto.getUsername())) {
+            throw new DuplicateResourceException("Username already taken: " + dto.getUsername());
+        }
+
+        // Create user entity
+        Users user = Users.builder()
+                .username(dto.getUsername())
+                .email(dto.getEmail())
+                .hashedPassword(passwordEncoder.encode(dto.getPassword()))
+                .role(dto.getRole() != null ? dto.getRole() : "user")
+                .isActive(1)
+                .build();
+
+        Users savedUser = usersRepository.save(user);
+
+        // Generate JWT token
+        String token = jwtService.generateJWT(savedUser.getEmail(), savedUser.getId(), savedUser.getRole());
+
+        return TokenResponseDTO.builder()
+                .accessToken(token)
+                .tokenType("bearer")
+                .user(toUserResponse(savedUser))
+                .build();
+    }
+
+    /**
+     * Authenticate user and return token.
+     */
+    public TokenResponseDTO signin(UserLoginDTO dto) {
+        Users user = usersRepository.findByEmail(dto.getEmail())
+                .orElseThrow(() -> new ResourceNotFoundException("Invalid email or password"));
+
+        if (!passwordEncoder.matches(dto.getPassword(), user.getHashedPassword())) {
+            throw new ResourceNotFoundException("Invalid email or password");
+        }
+
+        if (user.getIsActive() == 0) {
+            throw new ResourceNotFoundException("Account is deactivated");
+        }
+
+        String token = jwtService.generateJWT(user.getEmail(), user.getId(), user.getRole());
+
+        return TokenResponseDTO.builder()
+                .accessToken(token)
+                .tokenType("bearer")
+                .user(toUserResponse(user))
+                .build();
+    }
+
+    /**
+     * Get current user from email.
+     */
+    public UserResponseDTO getCurrentUser(String email) {
+        Users user = usersRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        return toUserResponse(user);
+    }
+
+    /**
+     * Refresh token for a user.
+     */
+    public TokenResponseDTO refreshToken(String email) {
+        Users user = usersRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        String token = jwtService.generateJWT(user.getEmail(), user.getId(), user.getRole());
+
+        return TokenResponseDTO.builder()
+                .accessToken(token)
+                .tokenType("bearer")
+                .user(toUserResponse(user))
+                .build();
+    }
+
+    /**
+     * Convert Users entity to UserResponseDTO.
+     */
+    private UserResponseDTO toUserResponse(Users user) {
+        return UserResponseDTO.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .role(user.getRole())
+                .createdAt(user.getCreatedAt())
+                .build();
+    }
+}
